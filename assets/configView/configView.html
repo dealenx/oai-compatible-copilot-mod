@@ -12,6 +12,8 @@
 			<div class="section-header">
 				<h2>Global Configuration</h2>
 				<div class="section-actions">
+					<button id="exportConfig" class="secondary">Export</button>
+					<button id="importConfig" class="secondary">Import</button>
 					<button id="refreshGlobalConfig" class="secondary">Refresh</button>
 				</div>
 			</div>
@@ -30,6 +32,14 @@
 					<label for="delay">Delay (ms)</label>
 					<div class="field-description">Fixed delay in milliseconds between consecutive requests.</div>
 					<input id="delay" type="number" min="0" placeholder="0" />
+				</div>
+				<div class="field">
+					<label for="readFileLines">Read File Lines</label>
+					<div class="field-description">
+						Number of lines to read when using `read_file` tool. Large lines may cost more tokens. Default is 0, let
+						model decide lines.
+					</div>
+					<input id="readFileLines" type="number" min="0" placeholder="0" />
 				</div>
 			</div>
 			<div class="retry-config">
@@ -110,6 +120,7 @@
 							<th>Base URL</th>
 							<th>API Key</th>
 							<th>API Mode</th>
+							<th>Custom Headers (JSON)</th>
 							<th>Actions</th>
 						</tr>
 					</thead>
@@ -228,7 +239,9 @@
 						</div>
 						<div class="field">
 							<label for="modelMaxCompletionTokens">Max Completion Tokens</label>
-							<div class="field-description">Maximum output tokens (OpenAI new standard - takes precedence over Max Tokens if both are set).</div>
+							<div class="field-description">
+								Maximum output tokens (OpenAI new standard - takes precedence over Max Tokens if both are set).
+							</div>
 							<input id="modelMaxCompletionTokens" type="number" class="model-input" placeholder="4096" min="1" />
 						</div>
 					</div>

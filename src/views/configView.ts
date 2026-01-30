@@ -2,11 +2,13 @@ import * as vscode from "vscode";
 import type { HFApiMode, HFModelItem } from "../types";
 import { normalizeUserModels, parseModelId } from "../utils";
 import { fetchModels } from "../provideModel";
+import { VersionManager } from "../versionManager";
 
 interface InitPayload {
 	baseUrl: string;
 	apiKey: string;
 	delay: number;
+	readFileLines: number;
 	retry: {
 		enabled?: boolean;
 		max_attempts?: number;
@@ -19,6 +21,25 @@ interface InitPayload {
 	providerKeys: Record<string, string>;
 }
 
+interface ExportConfig {
+	version: string;
+	exportDate: string;
+	baseUrl: string;
+	apiKey: string;
+	delay: number;
+	retry: {
+		enabled?: boolean;
+		max_attempts?: number;
+		interval_ms?: number;
+		status_codes?: number[];
+	};
+	commitLanguage: string;
+	commitModel: string;
+	models: HFModelItem[];
+	providerKeys: Record<string, string>;
+	readFileLines: number;
+}
+
 type IncomingMessage =
 	| { type: "requestInit" }
 	| {
@@ -26,18 +47,41 @@ type IncomingMessage =
 			baseUrl: string;
 			apiKey: string;
 			delay: number;
+			readFileLines: number;
 			retry: { enabled?: boolean; max_attempts?: number; interval_ms?: number; status_codes?: number[] };
 			commitModel: string;
 			commitLanguage: string;
 	  }
-	| { type: "fetchModels"; baseUrl: string; apiKey: string; apiMode?: HFApiMode | string }
-	| { type: "addProvider"; provider: string; baseUrl?: string; apiKey?: string; apiMode?: string }
-	| { type: "updateProvider"; provider: string; baseUrl?: string; apiKey?: string; apiMode?: string }
+	| {
+			type: "fetchModels";
+			baseUrl: string;
+			apiKey: string;
+			apiMode?: HFApiMode | string;
+			headers?: Record<string, string>;
+	  }
+	| {
+			type: "addProvider";
+			provider: string;
+			baseUrl?: string;
+			apiKey?: string;
+			apiMode?: string;
+			headers?: Record<string, string>;
+	  }
+	| {
+			type: "updateProvider";
+			provider: string;
+			baseUrl?: string;
+			apiKey?: string;
+			apiMode?: string;
+			headers?: Record<string, string>;
+	  }
 	| { type: "deleteProvider"; provider: string }
 	| { type: "addModel"; model: HFModelItem }
 	| { type: "updateModel"; model: HFModelItem; originalModelId?: string; originalConfigId?: string }
 	| { type: "deleteModel"; modelId: string }
-	| { type: "requestConfirm"; id: string; message: string; action: string };
+	| { type: "requestConfirm"; id: string; message: string; action: string }
+	| { type: "exportConfig" }
+	| { type: "importConfig" };
 
 type OutgoingMessage =
 	| { type: "init"; payload: InitPayload }
@@ -125,18 +169,32 @@ export class ConfigViewPanel {
 				await this.sendInit();
 				break;
 			case "saveGlobalConfig":
-				await this.saveGlobalConfig(message.baseUrl, message.apiKey, message.delay, message.retry, message.commitModel, message.commitLanguage);
+				await this.saveGlobalConfig(
+					message.baseUrl,
+					message.apiKey,
+					message.delay,
+					message.readFileLines,
+					message.retry,
+					message.commitModel,
+					message.commitLanguage
+				);
 				break;
 			case "fetchModels": {
-				const { models } = await fetchModels(message.baseUrl, message.apiKey, message.apiMode);
-				this.panel.webview.postMessage({ type: "modelsFetched", models });
+				try {
+					const { models } = await fetchModels(message.baseUrl, message.apiKey, message.apiMode, message.headers);
+					this.panel.webview.postMessage({ type: "modelsFetched", models });
+				} catch (err) {
+					console.error("[oaicopilot] fetchModels failed", err);
+					const errorMessage = err instanceof Error ? err.message : String(err);
+					this.panel.webview.postMessage({ type: "modelsFetchError", error: errorMessage });
+				}
 				break;
 			}
 			case "addProvider":
-				await this.addProvider(message.provider, message.baseUrl, message.apiKey, message.apiMode);
+				await this.addProvider(message.provider, message.baseUrl, message.apiKey, message.apiMode, message.headers);
 				break;
 			case "updateProvider":
-				await this.updateProvider(message.provider, message.baseUrl, message.apiKey, message.apiMode);
+				await this.updateProvider(message.provider, message.baseUrl, message.apiKey, message.apiMode, message.headers);
 				break;
 			case "deleteProvider":
 				await this.deleteProvider(message.provider);
@@ -152,6 +210,12 @@ export class ConfigViewPanel {
 				break;
 			case "deleteModel":
 				await this.deleteModel(message.modelId);
+				break;
+			case "exportConfig":
+				await this.exportConfig();
+				break;
+			case "importConfig":
+				await this.importConfig();
 				break;
 			default:
 				break;
@@ -218,7 +282,18 @@ export class ConfigViewPanel {
 		const foundModel = models.find((model) => model.useForCommitGeneration === true);
 		const commitModel = foundModel ? `${foundModel.id}${foundModel.configId ? "::" + foundModel.configId : ""}` : "";
 		const commitLanguage = config.get<string>("oaicopilot.commitLanguage", "English");
-		const payload: InitPayload = { baseUrl, apiKey, delay, retry, commitModel, commitLanguage, models, providerKeys };
+		const readFileLines = config.get<number>("oaicopilot.readFileLines", 0);
+		const payload: InitPayload = {
+			baseUrl,
+			apiKey,
+			delay,
+			readFileLines,
+			retry,
+			commitModel,
+			commitLanguage,
+			models,
+			providerKeys,
+		};
 		this.panel.webview.postMessage({ type: "init", payload });
 	}
 
@@ -226,6 +301,7 @@ export class ConfigViewPanel {
 		rawBaseUrl: string,
 		rawApiKey: string,
 		delay: number,
+		readFileLines: number,
 		retry: { enabled?: boolean; max_attempts?: number; interval_ms?: number; status_codes?: number[] },
 		commitModel: string,
 		commitLanguage: string
@@ -235,6 +311,7 @@ export class ConfigViewPanel {
 		const config = vscode.workspace.getConfiguration();
 		await config.update("oaicopilot.baseUrl", baseUrl, vscode.ConfigurationTarget.Global);
 		await config.update("oaicopilot.delay", delay, vscode.ConfigurationTarget.Global);
+		await config.update("oaicopilot.readFileLines", readFileLines, vscode.ConfigurationTarget.Global);
 		await config.update("oaicopilot.retry", retry, vscode.ConfigurationTarget.Global);
 		await config.update("oaicopilot.commitLanguage", commitLanguage, vscode.ConfigurationTarget.Global);
 		if (apiKey) {
@@ -292,7 +369,13 @@ export class ConfigViewPanel {
 		return Array.from({ length: 16 }, () => Math.floor(Math.random() * 36).toString(36)).join("");
 	}
 
-	private async addProvider(provider: string, baseUrl?: string, apiKey?: string, apiMode?: string) {
+	private async addProvider(
+		provider: string,
+		baseUrl?: string,
+		apiKey?: string,
+		apiMode?: string,
+		headers?: Record<string, string>
+	) {
 		const trimmedProvider = provider.trim();
 		if (!trimmedProvider) {
 			vscode.window.showErrorMessage("Provider ID is required.");
@@ -319,6 +402,7 @@ export class ConfigViewPanel {
 				owned_by: trimmedProvider,
 				baseUrl: baseUrl,
 				apiMode: (apiMode as HFApiMode) || "openai",
+				headers: headers,
 			};
 			models.push(defaultModel);
 		}
@@ -329,7 +413,13 @@ export class ConfigViewPanel {
 		await this.sendInit();
 	}
 
-	private async updateProvider(provider: string, baseUrl?: string, apiKey?: string, apiMode?: string) {
+	private async updateProvider(
+		provider: string,
+		baseUrl?: string,
+		apiKey?: string,
+		apiMode?: string,
+		headers?: Record<string, string>
+	) {
 		const trimmedProvider = provider.trim();
 		if (!trimmedProvider) {
 			vscode.window.showErrorMessage("Provider ID is required.");
@@ -359,6 +449,8 @@ export class ConfigViewPanel {
 					...model,
 					baseUrl: baseUrl || model.baseUrl,
 					apiMode: (apiMode as HFApiMode) || model.apiMode,
+					// only update headers if provided
+					...(headers !== undefined && { headers }),
 				};
 			}
 			return model;
@@ -462,5 +554,130 @@ export class ConfigViewPanel {
 		vscode.window.showInformationMessage(`Model ${modelId} has been deleted.`);
 		// Send refresh signal to frontend
 		await this.sendInit();
+	}
+
+	private async exportConfig() {
+		try {
+			const config = vscode.workspace.getConfiguration();
+			const baseUrl = config.get<string>("oaicopilot.baseUrl", "https://api.openai.com/v1");
+			const apiKey = (await this.secrets.get("oaicopilot.apiKey")) ?? "";
+			const delay = config.get<number>("oaicopilot.delay", 0);
+			const retry = config.get<{
+				enabled?: boolean;
+				max_attempts?: number;
+				interval_ms?: number;
+				status_codes?: number[];
+			}>("oaicopilot.retry", {
+				enabled: true,
+				max_attempts: 3,
+				interval_ms: 1000,
+			});
+			const commitLanguage = config.get<string>("oaicopilot.commitLanguage", "English");
+			const readFileLines = config.get<number>("oaicopilot.readFileLines", 0);
+			const models = normalizeUserModels(config.get<unknown>("oaicopilot.models", []));
+
+			const foundModel = models.find((model) => model.useForCommitGeneration === true);
+			const commitModel = foundModel ? `${foundModel.id}${foundModel.configId ? "::" + foundModel.configId : ""}` : "";
+
+			const providerKeys: Record<string, string> = {};
+			const providers = Array.from(new Set(models.map((m) => m.owned_by).filter(Boolean)));
+			for (const provider of providers) {
+				const normalized = provider.toLowerCase();
+				const key = await this.secrets.get(`oaicopilot.apiKey.${normalized}`);
+				if (key) {
+					providerKeys[provider] = key;
+				}
+			}
+
+			const exportData: ExportConfig = {
+				version: VersionManager.getVersion(),
+				exportDate: new Date().toISOString(),
+				baseUrl,
+				apiKey,
+				delay,
+				retry,
+				commitLanguage,
+				commitModel,
+				models,
+				readFileLines,
+				providerKeys,
+			};
+
+			const uri = await vscode.window.showSaveDialog({
+				defaultUri: vscode.Uri.file(`oaicopilot-config-${new Date().toISOString().split("T")[0]}.json`),
+				filters: { "JSON Files": ["json"] },
+				title: "Export OAICopilot Configuration",
+			});
+
+			if (!uri) {
+				vscode.window.showInformationMessage("Export configuration cancelled.");
+				return;
+			}
+
+			const encoder = new TextEncoder();
+			await vscode.workspace.fs.writeFile(uri, encoder.encode(JSON.stringify(exportData, null, 2)));
+
+			vscode.window.showInformationMessage(`Configuration exported to ${uri.fsPath}`);
+		} catch (error) {
+			const errorMessage = error instanceof Error ? error.message : "Unknown error";
+			vscode.window.showErrorMessage(`Failed to export configuration: ${errorMessage}`);
+		}
+	}
+
+	private async importConfig() {
+		try {
+			const uri = await vscode.window.showOpenDialog({
+				canSelectFiles: true,
+				canSelectFolders: false,
+				canSelectMany: false,
+				filters: { "JSON Files": ["json"] },
+				title: "Import OAICopilot Configuration",
+			});
+
+			if (!uri || uri.length === 0) {
+				vscode.window.showInformationMessage("Import configuration cancelled.");
+				return;
+			}
+
+			const content = await vscode.workspace.fs.readFile(uri[0]);
+			const decoder = new TextDecoder();
+			const jsonContent = decoder.decode(content);
+			const importData = JSON.parse(jsonContent) as ExportConfig;
+
+			if (!Array.isArray(importData.models)) {
+				throw new Error("Invalid configuration file: models must be an array");
+			}
+
+			const config = vscode.workspace.getConfiguration();
+
+			await config.update("oaicopilot.baseUrl", importData.baseUrl, vscode.ConfigurationTarget.Global);
+			await config.update("oaicopilot.delay", importData.delay, vscode.ConfigurationTarget.Global);
+			await config.update("oaicopilot.retry", importData.retry, vscode.ConfigurationTarget.Global);
+			await config.update("oaicopilot.readFileLines", importData.readFileLines, vscode.ConfigurationTarget.Global);
+			await config.update("oaicopilot.commitLanguage", importData.commitLanguage, vscode.ConfigurationTarget.Global);
+
+			if (importData.apiKey) {
+				await this.secrets.store("oaicopilot.apiKey", importData.apiKey);
+			} else {
+				await this.secrets.delete("oaicopilot.apiKey");
+			}
+
+			await config.update("oaicopilot.models", importData.models, vscode.ConfigurationTarget.Global);
+
+			for (const [provider, key] of Object.entries(importData.providerKeys)) {
+				const normalized = provider.toLowerCase();
+				if (key) {
+					await this.secrets.store(`oaicopilot.apiKey.${normalized}`, key);
+				} else {
+					await this.secrets.delete(`oaicopilot.apiKey.${normalized}`);
+				}
+			}
+
+			vscode.window.showInformationMessage("Configuration imported successfully.");
+			await this.sendInit();
+		} catch (error) {
+			const errorMessage = error instanceof Error ? error.message : "Unknown error";
+			vscode.window.showErrorMessage(`Failed to import configuration: ${errorMessage}`);
+		}
 	}
 }

@@ -10,17 +10,22 @@
 		"copilot",
 		"github-copilot",
 		"language-model",
+		"llm",
 		"openai",
 		"ollama",
 		"anthropic",
 		"claude",
-		"gemini"
+		"gemini",
+		"openai-compatible",
+		"openai-responses",
+		"git-commit",
+		"thinking"
 	],
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/JohnnyZ93/oai-compatible-copilot"
 	},
-	"version": "0.2.7-0",
+	"version": "0.3.1",
 	"engines": {
 		"vscode": "^1.104.0"
 	},
@@ -43,9 +48,7 @@
 	},
 	"license": "MIT",
 	"enabledApiProposals": [
-		"chatProvider",
-		"languageModelThinkingPart",
-		"languageModelDataPart"
+		"chatProvider"
 	],
 	"contributes": {
 		"languageModelChatProviders": [
@@ -352,7 +355,8 @@
 					"default": {
 						"enabled": true,
 						"max_attempts": 3,
-						"interval_ms": 1000
+						"interval_ms": 1000,
+						"status_codes": []
 					},
 					"properties": {
 						"enabled": {
@@ -408,6 +412,13 @@
 						"Polish"
 					],
 					"description": "Language for generated Git commit messages. Default is English."
+				},
+				"oaicopilot.readFileLines": {
+					"type": "number",
+					"default": 0,
+					"minimum": 0,
+					"maximum": 10000,
+					"description": "Number of lines to read when using `read_file` tool. Large lines may cost more tokens. Default is 0, let model decide lines."
 				}
 			}
 		}
