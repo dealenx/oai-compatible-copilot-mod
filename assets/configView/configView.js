@@ -369,7 +369,7 @@ function renderProviders() {
 					</select>
 				</td>
 				<td><textarea class="provider-input" data-field="headers" rows="2" placeholder='{"X-API-Version": "v1"}' style="width: 100%; font-family: monospace; font-size: 12px;">${headersJson}</textarea></td>
-				<td>
+				<td class="action-buttons">
 					<button class="update-provider-btn" data-provider="${provider}">Save</button>
 					<button class="delete-provider-btn danger" data-provider="${provider}">Delete</button>
 				</td>
