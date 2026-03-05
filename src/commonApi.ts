@@ -145,7 +145,9 @@ export abstract class CommonApi<TMessage, TRequestBody> {
 			return;
 		}
 		for (const [idx, buf] of Array.from(this._toolCallBuffers.entries())) {
-			const parsed = tryParseJSONObject(buf.args);
+			// [FIX] Normalize empty args to "{}" for parameterless tool calls
+			const argsText = buf.args.trim() || "{}";
+			const parsed = tryParseJSONObject(argsText);
 			if (!parsed.ok) {
 				if (throwOnInvalid) {
 					console.error("[OAI Compatible Model Provider] Invalid JSON for tool call", {
